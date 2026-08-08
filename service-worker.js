@@ -1,4 +1,4 @@
-const CACHE = "kitchen-service-v2";
+const CACHE = "kitchen-service-v3";
 const ASSETS = [
   "./",
   "./index.html",
