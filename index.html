@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ml">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Kitchen Service</title>
+<meta name="theme-color" content="#1B2420" />
+<link rel="manifest" href="./manifest.json" />
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+<link rel="icon" href="./icons/icon-192.png" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Kitchen Service" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  [data-theme="light"] { --ink:#1B2420; --paper:#F1F0EA; --steel:#5B6470; --steel-dark:#3A4149; --line:#D8D5C9; --card:#ffffff; }
+  [data-theme="dark"]  { --ink:#EDEAE0; --paper:#141815; --steel:#8B9187; --steel-dark:#D6D9D1; --line:#33392F; --card:#1D2320; }
+  ::selection { background: #D9A441; color: #1B2420; }
+  input:focus, select:focus, textarea:focus { border-color: var(--ink) !important; }
+  #boot-fallback { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #5B6470; padding: 24px; text-align: center; }
+  @media print {
+    body * { visibility: hidden; }
+    .print-area, .print-area * { visibility: visible; }
+    .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
+    .no-print { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot-fallback">ലോഡ് ചെയ്യുന്നു…</div></div>
+
+<!-- XLSX is only needed when the Excel-download button is pressed; loaded
+     in the background and non-blocking, so the app still works fully
+     (Members, Attendance, Stock, etc.) even if this one script is slow
+     or blocked on a given network. -->
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js" defer crossorigin></script>
+
+<!-- Everything else — React, ReactDOM, and the whole app — is bundled
+     into this single local file. No CDN calls needed for the app to load. -->
+<script src="./bundle.js"></script>
+</body>
+</html>
