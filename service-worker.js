@@ -1,4 +1,4 @@
-const CACHE = "kitchen-service-v4";
+const CACHE = "kitchen-service-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -21,20 +21,20 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network-first: always try to fetch the latest file first (so updates
+// show up immediately), and only fall back to the cached copy if the
+// network request fails (offline support).
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((res) => {
-          if (res && res.status === 200 && event.request.url.startsWith(self.location.origin)) {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(event.request)
+      .then((res) => {
+        if (res && res.status === 200 && event.request.url.startsWith(self.location.origin)) {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
