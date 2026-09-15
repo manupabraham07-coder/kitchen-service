@@ -37,7 +37,34 @@ const defaultState=()=>({
   tasks:[], attendance:[], audit:[]
 });
 let S=JSON.parse(localStorage.getItem(KEY)||"null")||defaultState();
+S.reminders=S.reminders||[];
+S.duties=S.duties||[];
+S.notifications=S.notifications||[];
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
+function checkReminders(){
+ const nowD=new Date(); const todayMs=new Date(S.date+"T00:00:00").getTime();
+ S.reminders.forEach(r=>{
+   if(!r.date||r.done) return;
+   const diff=Math.ceil((new Date(r.date+"T00:00:00").getTime()-todayMs)/86400000);
+   if(diff<=Number(r.daysBefore||0)){
+     const key=r.id+"-"+S.date;
+     if(!S.notifications.some(n=>n.key===key)){
+       S.notifications.unshift({id:uid(),key,text:`🔔 ${r.title} — ${diff>0?diff+" ദിവസം ബാക്കി":"ഇന്ന്"}`,date:S.date,at:now(),target:r.target||"Admin"});
+       if("Notification" in window && Notification.permission==="granted"){
+         try{new Notification("Kitchen Service Pro",{body:`${r.title} — ${diff>0?diff+" ദിവസം ബാക്കി":"ഇന്ന്"}`})}catch(e){}
+       }
+     }
+   }
+ });
+ S.notifications=S.notifications.slice(0,100);
+ save();
+}
+async function enableNotifications(){
+ if(!("Notification" in window)) return alert("ഈ browser notification support ചെയ്യുന്നില്ല.");
+ const p=await Notification.requestPermission();
+ alert(p==="granted"?"Notifications ON ആയി.":"Notification permission അനുവദിച്ചില്ല.");
+}
+
 function log(action,detail=""){S.audit.unshift({id:uid(),at:now(),user:S.user?.name||"System",action,detail});S.audit=S.audit.slice(0,500);save()}
 function seed(){
  if(S.members.length||S.rawMaterials.length||S.suppliers.length||S.recipes.length) return;
@@ -64,7 +91,7 @@ const tabs=[
  ["dash","Dashboard"],["people","Staff"],["att","Attendance"],["meals","Meal Count"],["menu","Menu"],
  ["calc","Calculation"],["recipe","Recipes"],["stock","Stock"],["purchase","Purchase"],["issue","Issue/Return"],
  ["prod","Production"],["consume","Consumption"],["waste","Wastage"],["cost","Food Cost"],["gas","Gas"],
- ["clean","Cleaning"],["equip","Equipment"],["vessel","Vessels"],["tasks","Tasks"],["reports","Reports"],["admin","Admin"]
+ ["clean","Cleaning"],["equip","Equipment"],["vessel","Vessels"],["tasks","Tasks"],["duty","Duty & Schedule"],["remind","Reminders"],["reports","Reports"],["admin","Admin"]
 ];
 function app(){
  if(!S.user){$("#app").innerHTML=login();return}
@@ -89,6 +116,8 @@ function page_dash(){
  return `<h2>Dashboard</h2><div class="card"><div class="form"><div class="field"><label>Working Date</label><input type="date" value="${d}" onchange="S.date=this.value;save();render()"></div><div><div class="muted">Total Meal Count</div><div class="kpi">${(Number(m.breakfast)||0)+(Number(m.lunch)||0)+(Number(m.dinner)||0)}</div></div></div></div>
  <div class="grid"><div class="card"><div class="muted">Staff Present</div><div class="kpi">${present}</div></div><div class="card"><div class="muted">Low Stock</div><div class="kpi ${low?'bad':''}">${low}</div></div><div class="card"><div class="muted">Today's Waste</div><div class="kpi">${wast}</div></div><div class="card"><div class="muted">Today's Other Cost</div><div class="kpi">${money(cost)}</div></div></div>
  <div class="card"><h3>Workflow</h3><div class="muted">Calculation → Stock → Purchase → Production → Consumption → Wastage → Cost → Reports</div></div>
+ <div class="grid"><div class="card"><div class="muted">Upcoming Reminders</div><div class="kpi">${S.reminders.filter(r=>!r.done&&r.date>=S.date).length}</div></div><div class="card"><div class="muted">Today's Duties</div><div class="kpi">${S.duties.filter(x=>x.date===S.date).length}</div></div></div>
+ ${S.notifications.length?`<div class="alert">🔔 ${esc(S.notifications[0].text)}</div>`:""}
  ${low?`<div class="alert">⚠️ ${low} stock item(s) are at/below minimum.</div>`:""}<div class="sectiontitle">Quick Actions</div><div class="quick"><button onclick="go('meals')">🍽️ Meal Count<span>Breakfast / Lunch / Dinner</span></button><button onclick="go('calc')">🧮 Calculation<span>Ingredient requirement</span></button><button onclick="go('stock')">📦 Stock<span>Check store balance</span></button><button onclick="go('purchase')">🛒 Purchase<span>Receive stock</span></button><button onclick="go('prod')">👨‍🍳 Production<span>Daily production</span></button><button onclick="go('waste')">🗑️ Wastage<span>Record waste</span></button></div>`;
 }
 
@@ -162,6 +191,51 @@ function page_equip(){return simpleLogPage("Equipment","equipment",[{id:"date",l
 function page_vessel(){return simpleLogPage("Vessels","vessels",[{id:"date",label:"Date",type:"date",value:S.date},{id:"item",label:"Vessel"},{id:"qty",label:"Qty",type:"number"},{id:"status",label:"Status"}])}
 function page_tasks(){return simpleLogPage("Daily Tasks","tasks",[{id:"date",label:"Date",type:"date",value:S.date},{id:"task",label:"Task"},{id:"department",label:"Department"},{id:"status",label:"Status"}])}
 
+
+function page_duty(){
+ return `<h2>Duty & Schedule</h2>
+ ${canEdit()?`<div class="card"><h3>Duty കൊടുക്കുക</h3><div class="form">
+ <div class="field"><label>Date</label><input id="dd" type="date" value="${S.date}"></div>
+ <div class="field"><label>Shift / Time</label><input id="dt" placeholder="6:00 AM - 2:00 PM"></div>
+ <div class="field"><label>Department</label><input id="ddep" placeholder="Kitchen / Store"></div>
+ <div class="field"><label>Duty</label><input id="dutyname" placeholder="Breakfast / Store / Cleaning"></div>
+ <div class="field"><label>In-charge / Supervisor</label><select id="din">${S.members.map(m=>`<option value="${m.id}">${esc(m.name)} - ${esc(m.dept)}</option>`).join("")}</select></div>
+ <div class="field"><label>Staff</label><select id="dstaff">${S.members.map(m=>`<option value="${m.id}">${esc(m.name)} - ${esc(m.dept)}</option>`).join("")}</select></div>
+ </div><div class="actions"><button class="btn" onclick="addDuty()">Assign Duty</button></div></div>`:""}
+ <div class="card"><h3>Duty List</h3><div class="tablewrap"><table class="table"><tr><th>Date</th><th>Time</th><th>Department</th><th>Duty</th><th>In-charge</th><th>Staff</th></tr>
+ ${S.duties.slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(x=>{
+ let ic=S.members.find(m=>m.id===x.incharge), st=S.members.find(m=>m.id===x.staff);
+ return `<tr><td>${x.date}</td><td>${esc(x.time)}</td><td>${esc(x.department)}</td><td>${esc(x.duty)}</td><td>${esc(ic?.name)}</td><td>${esc(st?.name)}</td></tr>`}).join("")||`<tr><td colspan="6" class="empty">Duty set ചെയ്തിട്ടില്ല</td></tr>`}
+ </table></div></div>`;
+}
+function addDuty(){
+ S.duties.unshift({id:uid(),date:dd.value,time:dt.value,department:ddep.value,duty:dutyname.value,incharge:din.value,staff:dstaff.value});
+ log("Duty assigned",dutyname.value); save(); render();
+}
+
+function page_remind(){
+ const upcoming=S.reminders.slice().sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+ return `<h2>Reminders & Alerts</h2>
+ <div class="card"><div class="actions"><button class="btn" onclick="enableNotifications()">🔔 Enable Notifications</button></div>
+ <p class="muted">ഉദാഹരണം: 10-ാം തീയതിയിലെ maintenance / purchase / special duty 5 ദിവസം മുമ്പ് remind ചെയ്യാം.</p></div>
+ ${canEdit()?`<div class="card"><h3>മുൻകൂട്ടി Reminder Set ചെയ്യുക</h3><div class="form">
+ <div class="field"><label>കാര്യത്തിന്റെ പേര്</label><input id="rt" placeholder="Gas service / Big event / Purchase"></div>
+ <div class="field"><label>Due Date</label><input id="rd" type="date"></div>
+ <div class="field"><label>എത്ര ദിവസം മുമ്പ്?</label><select id="rb"><option value="1">1 ദിവസം</option><option value="3">3 ദിവസം</option><option value="5" selected>5 ദിവസം</option><option value="6">6 ദിവസം</option><option value="7">7 ദിവസം</option></select></div>
+ <div class="field"><label>Alert Target</label><select id="rtg"><option>Admin</option><option>Supervisor</option><option>In-charge</option><option>Manager</option></select></div>
+ <div class="field full"><label>Details</label><textarea id="rx" placeholder="എന്താണ് ചെയ്യേണ്ടത്?"></textarea></div>
+ </div><div class="actions"><button class="btn" onclick="addReminder()">Set Reminder</button></div></div>`:""}
+ <div class="card"><h3>Upcoming Reminders</h3><div class="tablewrap"><table class="table"><tr><th>കാര്യo</th><th>Due Date</th><th>Reminder</th><th>Alert</th><th>Details</th></tr>
+ ${upcoming.map(r=>`<tr><td>${esc(r.title)}</td><td>${r.date}</td><td>${r.daysBefore} ദിവസം മുമ്പ്</td><td>${esc(r.target)}</td><td>${esc(r.details||"")}</td></tr>`).join("")||`<tr><td colspan="5" class="empty">Reminder ഇല്ല</td></tr>`}
+ </table></div></div>
+ <div class="card"><h3>🔔 Notifications</h3>${S.notifications.slice(0,30).map(n=>`<div style="padding:9px;border-bottom:1px solid var(--line)">${esc(n.text)} <span class="muted">· ${esc(n.date)}</span></div>`).join("")||`<div class="empty">Notifications ഇല്ല</div>`}</div>`;
+}
+function addReminder(){
+ if(!rt.value||!rd.value) return alert("കാര്യവും Due Date-ഉം നൽകണം");
+ S.reminders.unshift({id:uid(),title:rt.value,date:rd.value,daysBefore:+rb.value,target:rtg.value,details:rx.value,done:false});
+ log("Reminder created",rt.value); save(); checkReminders(); render();
+}
+
 function page_reports(){
  const d=S.date,meal=S.meals[d]||{breakfast:0,lunch:0,dinner:0};
  return `<h2>Reports</h2><div class="card"><div class="grid"><div><div class="muted">Date</div><div class="kpi">${d}</div></div><div><div class="muted">Meals</div><div class="kpi">${(+meal.breakfast)+(+meal.lunch)+(+meal.dinner)}</div></div><div><div class="muted">Present</div><div class="kpi">${S.attendance.filter(x=>x.date===d&&x.in).length}</div></div><div><div class="muted">Waste Entries</div><div class="kpi">${S.wastage.filter(x=>x.date===d).length}</div></div></div><div class="actions"><button class="btn" onclick="exportCSV()">Excel/CSV Export</button><button class="btn secondary" onclick="window.print()">Print / Save PDF</button></div></div><div class="card"><h3>Daily Summary</h3><p>Purchase: ${money(S.purchases.filter(x=>x.date===d).reduce((a,x)=>a+x.qty*x.rate,0))}</p><p>Cost entries: ${money(S.costs.filter(x=>x.date===d).reduce((a,x)=>a+(+x.amount||0),0))}</p><p>Wastage quantity: ${S.wastage.filter(x=>x.date===d).reduce((a,x)=>a+(+x.qty||0),0)}</p></div>`;
@@ -183,5 +257,6 @@ function restore(inp){let f=inp.files[0];if(!f)return;let r=new FileReader();r.o
 function resetAll(){if(!confirm("എല്ലാ app data-യും delete ചെയ്യണോ?"))return;localStorage.removeItem(KEY);location.reload()}
 if("serviceWorker" in navigator) window.addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js").catch(()=>{}));
 app();
+setTimeout(checkReminders,500);
 </script>
 </body></html>
