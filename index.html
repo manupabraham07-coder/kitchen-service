@@ -20,7 +20,7 @@ html{scroll-behavior:smooth}body{padding-bottom:72px;-webkit-tap-highlight-color
 <body>
 <div id="app"></div>
 <script>
-const KEY="kitchen_service_pro_v2";
+const KEY="kitchen_service_pro_v4";
 const $=s=>document.querySelector(s);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const now=()=>new Date().toISOString();
@@ -40,6 +40,7 @@ let S=JSON.parse(localStorage.getItem(KEY)||"null")||defaultState();
 S.reminders=S.reminders||[];
 S.duties=S.duties||[];
 S.notifications=S.notifications||[];
+S.planDeductions=S.planDeductions||[];
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
 function checkReminders(){
  const nowD=new Date(); const todayMs=new Date(S.date+"T00:00:00").getTime();
@@ -86,6 +87,7 @@ function seed(){
  save();
 }
 seed();
+checkStockAlerts();
 
 const tabs=[
  ["dash","Dashboard"],["people","Staff"],["att","Attendance"],["meals","Meal Count"],["menu","Menu"],
@@ -136,7 +138,7 @@ function hours(i,o){let a=i.split(":").map(Number),b=o.split(":").map(Number);le
 function punch(mid,type){let a=S.attendance.find(x=>x.date===S.date&&x.memberId===mid);if(!a){a={id:uid(),date:S.date,memberId:mid,in:"",out:""};S.attendance.push(a)}if(type==="out"&&!a.in)return alert("ആദ്യം IN mark ചെയ്യണം");a[type]=timeNow();log(type==="in"?"Attendance IN":"Attendance OUT",mid);save();render()}
 
 function page_meals(){
- let m=S.meals[S.date]||{breakfast:S.settings.capacity,lunch:S.settings.capacity,dinner:S.settings.capacity};
+ let m=S.meals[S.date]||{breakfast:0,lunch:0,dinner:0};
  return `<h2>Meal Count</h2><div class="card"><div class="form"><div class="field"><label>Date</label><input type="date" value="${S.date}" onchange="S.date=this.value;save();render()"></div><div class="field"><label>Breakfast</label><input id="mb" type="number" value="${m.breakfast}"></div><div class="field"><label>Lunch</label><input id="ml" type="number" value="${m.lunch}"></div><div class="field"><label>Dinner</label><input id="md" type="number" value="${m.dinner}"></div></div><div class="actions"><button class="btn" onclick="saveMeals()">Save Meal Count</button></div></div>`;
 }
 function saveMeals(){S.meals[S.date]={breakfast:+mb.value||0,lunch:+ml.value||0,dinner:+md.value||0};log("Meal count saved",S.date);save();render()}
@@ -146,21 +148,31 @@ function page_menu(){
 }
 function addMenu(){S.menu.push({id:uid(),date:mdate.value,meal:mmeal.value,name:mname.value});log("Menu added",mname.value);save();render()}
 
+function unitBase(q,u){u=String(u||"").toLowerCase();q=Number(q||0);if(u==="g"||u==="gram"||u==="grams")return {q:q/1000,u:"kg"};if(u==="ml"||u==="millilitre"||u==="milliliter")return {q:q/1000,u:"L"};return {q,u:u||""}}
+function fmtQty(q,u){q=Number(q||0);u=String(u||"");if(!q)return "0 "+u;return (Math.abs(q-Math.round(q))<1e-9?Math.round(q):q.toFixed(3).replace(/0+$/,'').replace(/\.$/,''))+" "+u}
+function getPlan(date){let agg={};let rows=S.menu.filter(m=>m.date===date);rows.forEach(m=>{let people=Number((S.meals[date]||{})[String(m.meal||"").toLowerCase()]||0);let r=S.recipes.find(r=>r.name.toLowerCase()===String(m.name||"").toLowerCase());if(!r||!people)return;r.ings.forEach(i=>{let b=unitBase(Number(i.qty)*people,i.unit);let k=i.name.trim().toLowerCase()+"|"+b.u;if(!agg[k])agg[k]={name:i.name.trim(),qty:0,unit:b.u};agg[k].qty+=b.q})});return {items:Object.values(agg)}}
+function deductMealStock(meal){let people=Number((S.meals[S.date]||{})[meal.toLowerCase()]||0);if(!people)return alert("ഈ meal-ന്റെ people count നൽകണം");let key=S.date+"|"+meal;if(S.planDeductions.some(x=>x.key===key))return alert("ഈ meal-ന്റെ stock ഇതിനകം deduct ചെയ്തിട്ടുണ്ട്.");let menu=S.menu.filter(m=>m.date===S.date&&m.meal===meal);if(!menu.length)return alert("ഈ meal-ന് menu set ചെയ്തിട്ടില്ല.");let agg={};menu.forEach(m=>{let r=S.recipes.find(r=>r.name.toLowerCase()===String(m.name).toLowerCase());if(!r)return;r.ings.forEach(i=>{let b=unitBase(Number(i.qty)*people,i.unit);let k=i.name.trim().toLowerCase()+"|"+b.u;if(!agg[k])agg[k]={name:i.name.trim(),qty:0,unit:b.u};agg[k].qty+=b.q})});let shortages=[];Object.values(agg).forEach(x=>{let st=S.rawMaterials.find(a=>a.name.toLowerCase()===x.name.toLowerCase());if(!st)shortages.push(x.name+" stock item ഇല്ല");else{let have=Number(st.qty||0);let base=unitBase(have,st.unit);if(base.u!==x.unit){shortages.push(x.name+" unit mismatch");}else if(base.q<x.qty){shortages.push(x.name+" shortage: "+fmtQty(x.qty-base.q,x.unit));}}});if(shortages.length)return alert("Stock മതിയാകില്ല:\n\n"+shortages.join("\n"));Object.values(agg).forEach(x=>{let st=S.rawMaterials.find(a=>a.name.toLowerCase()===x.name.toLowerCase());let b=unitBase(Number(st.qty||0),st.unit);st.qty=Math.max(0,b.q-x.qty);});S.planDeductions.unshift({id:uid(),key,date:S.date,meal,people,at:now(),items:Object.values(agg)});S.production.unshift({id:uid(),date:S.date,item:meal+" production",qty:people,people,at:now(),autoStock:true});log("Food production - stock deducted",meal+" / "+people);save();checkStockAlerts();render()}
+function checkStockAlerts(){let lows=S.rawMaterials.filter(x=>Number(x.qty)<=Number(x.min));if(lows.length){lows.slice(0,10).forEach(x=>{let key="stock-"+x.id+"-"+S.date;if(!S.notifications.some(n=>n.key===key)){S.notifications.unshift({id:uid(),key,text:`📦 Stock Low: ${x.name} — ${fmtQty(x.qty,x.unit)} (Min ${fmtQty(x.min,x.unit)})`,date:S.date,at:now(),target:"Admin"})}});S.notifications=S.notifications.slice(0,100);save()}}
+
 function page_calc(){
- let meals=S.meals[S.date]||{breakfast:S.settings.capacity,lunch:S.settings.capacity,dinner:S.settings.capacity};
- let total=+meals.breakfast+(+meals.lunch)+(+meals.dinner);
- let agg={};S.recipes.forEach(r=>r.ings.forEach(i=>{agg[i.name]=(agg[i.name]||0)+Number(i.qty)*total}));
- let rows=Object.entries(agg).map(([n,q])=>{let s=S.rawMaterials.find(x=>x.name.toLowerCase()===n.toLowerCase());let have=s?Number(s.qty):0;return `<tr><td>${esc(n)}</td><td>${q.toFixed(2)}</td><td>${s?.unit||""}</td><td>${have.toFixed(2)}</td><td class="${have>=q?'good':'bad'}">${have>=q?"OK":"SHORT"}</td></tr>`}).join("");
- return `<h2>Ingredient Calculation</h2><div class="card"><div class="grid"><div><div class="muted">Breakfast</div><div class="kpi">${meals.breakfast}</div></div><div><div class="muted">Lunch</div><div class="kpi">${meals.lunch}</div></div><div><div class="muted">Dinner</div><div class="kpi">${meals.dinner}</div></div><div><div class="muted">Total</div><div class="kpi">${total}</div></div></div><p class="muted">Recipe quantity × total meals. For meal-specific recipes, use the recipe list accordingly.</p></div><div class="card"><div class="tablewrap"><table class="table"><tr><th>Ingredient</th><th>Required</th><th>Unit</th><th>Stock</th><th>Status</th></tr>${rows||`<tr><td colspan="5" class="empty">Add recipes first</td></tr>`}</table></div></div>`;
+ let meals=S.meals[S.date]||{breakfast:0,lunch:0,dinner:0};
+ let plan=getPlan(S.date);
+ let rows=plan.items.map(x=>{let st=S.rawMaterials.find(a=>a.name.toLowerCase()===x.name.toLowerCase());let have=st?Number(st.qty):0;let req=x.qty;let shortage=Math.max(0,req-have);let unit=x.unit||st?.unit||"";return `<tr><td>${esc(x.name)}</td><td>${fmtQty(req,unit)}</td><td>${esc(unit)}</td><td>${fmtQty(have,st?.unit||unit)}</td><td>${shortage?`<span class="bad">SHORT ${fmtQty(shortage,unit)}</span>`:`<span class="good">OK</span>`}</td><td>${shortage?`<span class="warn">Buy ${fmtQty(shortage,unit)}</span>`:"-"}</td></tr>`}).join("");
+ return `<h2>Food Calculation</h2>
+ <div class="card"><div class="form"><div class="field"><label>Date</label><input type="date" value="${S.date}" onchange="S.date=this.value;save();render()"></div><div><div class="muted">Breakfast</div><div class="kpi">${meals.breakfast||0}</div></div><div><div class="muted">Lunch</div><div class="kpi">${meals.lunch||0}</div></div><div><div class="muted">Dinner</div><div class="kpi">${meals.dinner||0}</div></div></div>
+ <p class="muted"><b>Recipe × meal people</b> ആണ് calculation. Menu-ൽ ചേർത്ത recipes മാത്രം ഈ ദിവസത്തേക്ക് കണക്കാക്കും.</p>
+ <div class="actions"><button class="btn" onclick="render()">🔄 Recalculate</button><button class="btn secondary" onclick="go('menu')">🍽️ Set Menu</button><button class="btn secondary" onclick="go('meals')">👥 Set People</button></div></div>
+ <div class="card"><h3>Required Ingredients</h3><div class="tablewrap"><table class="table"><tr><th>Ingredient</th><th>Required</th><th>Unit</th><th>Current Stock</th><th>Status</th><th>Purchase</th></tr>${rows||`<tr><td colspan="6" class="empty">ഈ തീയതിക്ക് Menu/Recipe set ചെയ്തിട്ടില്ല.</td></tr>`}</table></div></div>
+ <div class="card"><h3>🍲 Production & Stock</h3><p class="muted">Food production save ചെയ്യുമ്പോൾ ഈ day's planned ingredients stock-ൽ നിന്ന് ഒരിക്കൽ മാത്രം automatically കുറയ്ക്കാം.</p>${["Breakfast","Lunch","Dinner"].map(meal=>{let people=Number(meals[meal.toLowerCase()]||0);let key=S.date+"|"+meal;let done=S.planDeductions.some(x=>x.key===key);let has=S.menu.some(m=>m.date===S.date&&m.meal===meal);return `<div style="padding:9px 0;border-bottom:1px solid var(--line)"><b>${meal}</b> · ${people} people · ${has?"Menu set":"No menu"} · ${done?"<span class=\"good\">Stock deducted ✓</span>":"<span class=\"warn\">Not deducted</span>"} ${has&&!done&&canEdit()?`<button class="btn" style="float:right" onclick="deductMealStock('${meal}')">Produce & Deduct Stock</button>`:""}</div>`}).join("")}</div>`;
 }
 
 function page_recipe(){
- return `<h2>Recipe Master</h2>${canEdit()?`<div class="card"><div class="form"><div class="field"><label>Recipe</label><input id="rn" placeholder="Rice Meal"></div><div class="field"><label>Meal</label><select id="rm"><option>Breakfast</option><option>Lunch</option><option>Dinner</option></select></div><div class="field full"><label>Ingredients (one per line: name,qty,unit)</label><textarea id="ri" placeholder="Rice,0.18,kg&#10;Oil,0.01,L"></textarea></div></div><div class="actions"><button class="btn" onclick="addRecipe()">Save Recipe</button></div></div>`:""}<div class="card">${S.recipes.map(r=>`<div style="padding:10px 0;border-bottom:1px solid var(--line)"><b>${esc(r.name)}</b> <span class="pill">${esc(r.meal)}</span><div class="muted">${r.ings.map(i=>`${esc(i.name)} ${i.qty}${esc(i.unit)}`).join(" · ")}</div></div>`).join("")}</div>`;
+ return `<h2>Recipe Master</h2>${canEdit()?`<div class="card"><div class="form"><div class="field"><label>Recipe</label><input id="rn" placeholder="Rice Meal"></div><div class="field"><label>Meal</label><select id="rm"><option>Breakfast</option><option>Lunch</option><option>Dinner</option></select></div><div class="field full"><label>Ingredients PER PERSON (one per line: name,qty,unit)</label><textarea id="ri" placeholder="Rice,0.18,kg&#10;Oil,0.01,L&#10;Salt,5,g"></textarea></div></div><div class="actions"><button class="btn" onclick="addRecipe()">Save Recipe</button></div></div>`:""}<div class="card">${S.recipes.map(r=>`<div style="padding:10px 0;border-bottom:1px solid var(--line)"><b>${esc(r.name)}</b> <span class="pill">${esc(r.meal)}</span><div class="muted">${r.ings.map(i=>`${esc(i.name)} ${i.qty}${esc(i.unit)}`).join(" · ")}</div></div>`).join("")}</div>`;
 }
 function addRecipe(){let ings=ri.value.split("\\n").map(x=>x.trim()).filter(Boolean).map(x=>{let [name,qty,unit]=x.split(",");return{name,qty:+qty||0,unit:unit||""}});S.recipes.push({id:uid(),name:rn.value,meal:rm.value,servings:1,ings});log("Recipe added",rn.value);save();render()}
 
 function page_stock(){
- return `<h2>Stock / Store</h2>${canEdit()?`<div class="card"><div class="form"><div class="field"><label>Item</label><input id="sn"></div><div class="field"><label>Unit</label><input id="su" placeholder="kg / L / pcs"></div><div class="field"><label>Opening Qty</label><input id="sq" type="number"></div><div class="field"><label>Minimum</label><input id="smin" type="number"></div><div class="field"><label>Rate</label><input id="sr" type="number"></div><div class="field"><label>Expiry</label><input id="sex" type="date"></div></div><div class="actions"><button class="btn" onclick="addStock()">Add Item</button></div></div>`:""}<div class="card"><div class="tablewrap"><table class="table"><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Min</th><th>Rate</th><th>Expiry</th><th>Status</th></tr>${S.rawMaterials.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.qty}</td><td>${esc(x.unit)}</td><td>${x.min}</td><td>${money(x.rate)}</td><td>${x.expiry||"-"}</td><td class="${Number(x.qty)<=Number(x.min)?'bad':'good'}">${Number(x.qty)<=Number(x.min)?"LOW":"OK"}</td></tr>`).join("")}</table></div></div>`;
+ return `<h2>Stock / Store</h2><div class="alert">📦 <b>Automatic Alert:</b> Production deduct ചെയ്യുമ്പോൾ stock കുറയും. Minimum-ന് താഴെയായാൽ LOW alert കാണിക്കും.</div>${canEdit()?`<div class="card"><div class="form"><div class="field"><label>Item</label><input id="sn"></div><div class="field"><label>Unit</label><input id="su" placeholder="kg / L / pcs"></div><div class="field"><label>Opening Qty</label><input id="sq" type="number"></div><div class="field"><label>Minimum</label><input id="smin" type="number"></div><div class="field"><label>Rate</label><input id="sr" type="number"></div><div class="field"><label>Expiry</label><input id="sex" type="date"></div></div><div class="actions"><button class="btn" onclick="addStock()">Add Item</button></div></div>`:""}<div class="card"><div class="tablewrap"><table class="table"><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Min</th><th>Rate</th><th>Expiry</th><th>Status</th></tr>${S.rawMaterials.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.qty}</td><td>${esc(x.unit)}</td><td>${x.min}</td><td>${money(x.rate)}</td><td>${x.expiry||"-"}</td><td class="${Number(x.qty)<=Number(x.min)?'bad':'good'}">${Number(x.qty)<=Number(x.min)?"LOW":"OK"}</td></tr>`).join("")}</table></div></div>`;
 }
 function addStock(){S.rawMaterials.push({id:uid(),name:sn.value,unit:su.value,qty:+sq.value||0,min:+smin.value||0,rate:+sr.value||0,expiry:sex.value});log("Stock item added",sn.value);save();render()}
 
@@ -178,7 +190,7 @@ function simpleLogPage(title,key,fields){
  return `<h2>${title}</h2>${canEdit()?`<div class="card"><div class="form">${fields.map(f=>`<div class="field"><label>${f.label}</label><input id="${f.id}" type="${f.type||"text"}" ${f.value?`value="${f.value}"`:""}></div>`).join("")}</div><div class="actions"><button class="btn" onclick="addSimple('${key}')">Save</button></div></div>`:""}<div class="card"><div class="tablewrap"><table class="table"><tr>${fields.map(f=>`<th>${f.label}</th>`).join("")}<th>Saved</th></tr>${S[key].map(x=>`<tr>${fields.map(f=>`<td>${esc(x[f.id])}</td>`).join("")}<td>${esc(x.at||"")}</td></tr>`).join("")}</table></div></div>`;
 }
 function addSimple(key){let map={};let cfg={prod:["date","item","qty","people"],consume:["date","item","qty","note"],waste:["date","item","qty","reason"],cost:["date","category","amount","note"],gas:["date","cylinder","qty","amount"],clean:["date","area","status","note"],equip:["date","item","status","note"],vessel:["date","item","qty","status"],tasks:["date","task","department","status"]}[key];cfg.forEach(id=>map[id]=$( "#"+id).value);map.at=now();S[key].unshift(map);
- if(key==="consume"||key==="waste"){let item=S.rawMaterials.find(x=>x.name.toLowerCase()===String(map.item).toLowerCase());if(item){if(key==="consume")item.qty-=+map.qty||0;else item.qty-=+map.qty||0;}}
+ if(key==="waste"){let item=S.rawMaterials.find(x=>x.name.toLowerCase()===String(map.item).toLowerCase());if(item){item.qty=Math.max(0,Number(item.qty||0)-Number(map.qty||0));}}
  log(key+" saved",map.item||map.task||map.category||"");save();render()
 }
 function page_prod(){return simpleLogPage("Production","production",[{id:"date",label:"Date",type:"date",value:S.date},{id:"item",label:"Production Item"},{id:"qty",label:"Qty",type:"number"},{id:"people",label:"Planned People",type:"number"}])}
